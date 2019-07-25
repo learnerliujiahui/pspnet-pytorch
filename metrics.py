@@ -28,6 +28,7 @@ class runningScore(object):
 
         return hist
 
+
     def update(self, label_trues, label_preds):
         # 对单张image进行处理：
         for lt, lp in zip(label_trues, label_preds):
