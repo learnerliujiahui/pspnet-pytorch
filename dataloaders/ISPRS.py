@@ -30,7 +30,7 @@ class ISPRSSegmentation(Dataset):
         super().__init__()
         self._base_dir = base_dir  # ISPRS image dir
         self._image_dir = os.path.join(self._base_dir, 'top')
-        self._cat_dir = os.path.join(self._base_dir, 'gt_caffe')
+        self._cat_dir = os.path.join(self._base_dir, 'gt')
 
         if isinstance(split, str):
             self.split = [split]
@@ -54,7 +54,6 @@ class ISPRSSegmentation(Dataset):
             for ii, line in enumerate(lines):
                 _image = os.path.join(self._image_dir, line + ".tif")
                 _cat = os.path.join(self._cat_dir, line + ".png")
-                # print(os.path.isfile(_image))
                 assert os.path.isfile(_image)
                 assert os.path.isfile(_cat)
 

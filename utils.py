@@ -15,3 +15,7 @@ def cross_entropy2d(input, target, weight=None, size_average=True):
     if size_average:
         loss /= mask.data.sum()
     return loss
+
+
+def lr_poly(base_lr, iter_, max_iter=100, power=0.9):
+    return base_lr * ((1 - float(iter_) / max_iter) ** power)
