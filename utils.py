@@ -1,3 +1,4 @@
+import math
 import torch.nn.functional as F
 
 
@@ -19,3 +20,26 @@ def cross_entropy2d(input, target, weight=None, size_average=True):
 
 def lr_poly(base_lr, iter_, max_iter=100, power=0.9):
     return base_lr * ((1 - float(iter_) / max_iter) ** power)
+
+
+def adjust_learning_rate(args, optimizer, iter_, max_iter, power=0.9,
+                         batch=None, nBatch=None, method='cosine'):
+    if method == 'cosine':
+        T_total = max_iter * nBatch
+        T_cur = (iter_ % max_iter) * nBatch + batch
+        lr = 0.5 * args.lr * (1 + math.cos(math.pi * T_cur / T_total))
+    elif method == 'multistep':
+        if args.data in ['cifar10', 'cifar100']:
+            lr, decay_rate = args.lr, 0.1
+            if iter_ >= max_iter * 0.75:
+                lr *= decay_rate**2
+            elif iter_ >= max_iter * 0.5:
+                lr *= decay_rate
+        else:
+            """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+            lr = args.lr * (0.1 ** (iter_// 30))
+    elif method == 'poly':
+        lr = args.lr * ((1 - float(iter_) / max_iter) ** power)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    return lr
