@@ -15,29 +15,29 @@ from dataloaders import ISPRS
 from dataloaders import custom_transforms as tr
 from tensorboardX import SummaryWriter
 
-from tqdm import tqdm
 from pspnet import PSPNet
 import utils
 import metrics
 
 parser = argparse.ArgumentParser(description="Pytorch PSPNet parameters")
 parser.add_argument('--data', type=str, default="ISPRS", help='Path to dataset folder')
-parser.add_argument('--models-path', type=str, default="/home/liujiahui/PycharmProjects/pspnet-pytorch/model",
+parser.add_argument('--snapshot', type=str, default=None, help='Path to pretrained weights')
+parser.add_argument('--models_path', type=str, default="/home/liujiahui/PycharmProjects/pspnet-pytorch/model",
                     help='Path for storing model snapshots')
 parser.add_argument('--log_dir', default='/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/log')
+parser.add_argument('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
 
+parser.add_argument('--epochs', type=int, default=1000, help='Number of training epochs to run')
 parser.add_argument('--backend', type=str, default='resnet101', help='Feature extractor')
-parser.add_argument('--num_classes', type=int, help='Class number')
-parser.add_argument('--snapshot', type=str, default=None, help='Path to pretrained weights')
-parser.add_argument('--crop_x', type=int, default=256, help='Horizontal random crop size')
-parser.add_argument('--crop_y', type=int, default=256, help='Vertical random crop size')
-parser.add_argument('--batch-size', type=int, default=2)
+parser.add_argument('--lr', type=float, default=0.01, help='learning rate')
+parser.add_argument('--lr_type', type=str, default='poly', choices=['cosine', 'multistage', 'poly'])
+parser.add_argument('--batch-size', type=int, default=1)
 parser.add_argument('--momentum', default=0.9)
 parser.add_argument('--weight_decay', default=1e-4)
+parser.add_argument('--num_classes', type=int, help='Class number')
+parser.add_argument('--crop_x', type=int, default=256, help='Horizontal random crop size')
+parser.add_argument('--crop_y', type=int, default=256, help='Vertical random crop size')
 parser.add_argument('--alpha', type=float, default=1.0, help='Coefficient for classification loss term')
-parser.add_argument('--epochs', type=int, default=1000, help='Number of training epochs to run')
-parser.add_argument('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
-parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
 parser.add_argument('--milestones', type=str, default='10,20,30', help='Milestones for LR decreasing')
 args = parser.parse_args()
 
@@ -51,7 +51,6 @@ models = {
     'resnet152': lambda: PSPNet(args.num_classes, sizes=(1, 2, 3, 6), psp_size=2048, deep_features_size=1024, backend='resnet152')
 }
 
-
 def build_network(snapshot, backend):
     epoch = 0
     backend = backend.lower()
@@ -60,17 +59,20 @@ def build_network(snapshot, backend):
     # load net into Multi-GPU
     net = nn.DataParallel(net, device_ids=range(torch.cuda.device_count()))
     net.cuda()
-
+    ''''{}_{}_{}_PSPNet_best_model.pth'.format(str(epoch + 1), args.data, args.backend'''
     if snapshot is not None:
-        _, epoch = os.path.basename(snapshot).split('_')
+        print("Initializing weights from: {}...".format(snapshot))
+        epoch, data, backend, _ = os.path.basename(snapshot).split('_')
         epoch = int(epoch)
         net.load_state_dict(torch.load(snapshot))
         logging.info("Snapshot for epoch {} loaded from {}".format(epoch, snapshot))
+    else:
+        print("Training PSPNet from scratch...")
     net = net.cuda()
     return net, epoch
 
 
-def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alpha, epochs, lr, milestones):
+def train(data, models_path, snapshot, backend, crop_x, crop_y, batch_size, alpha, epochs, lr, milestones):
 
     #data_path = os.path.abspath(os.path.expanduser(data_path))
     models_path = os.path.abspath(os.path.expanduser(models_path))
@@ -84,26 +86,26 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
         y_cls - batch of 1D tensors of dimensionality N: N total number of classes, 
         y_cls[i, T] = 1 if class T is present in image i, 0 otherwise
     '''
+
     # training setting
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
     composed_transforms_tr = transforms.Compose([tr.RandomSized(512),     #####
                                                  tr.RandomRotate(15),
                                                  tr.RandomHorizontalFlip(),
-                                                 tr.Normalize(mean=mean,
-                                                              std=std),
+                                                 tr.Normalize(mean=mean, std=std),
                                                  tr.ToTensor()]
                                                 )
     # testing setting
     composed_transforms_ts = transforms.Compose([tr.FixedResize(size=(512, 512)),
-                                                 tr.Normalize(mean=mean,
-                                                              std=std),
+                                                 tr.Normalize(mean=mean, std=std),
                                                  tr.ToTensor()]
                                                 )
 
     if data == 'ISPRS':
         print("Using ISPRS dataset......")
-        args.num_classes = 6
+        CLASSES = ['impervious_surfaces', 'building', 'low_vegetation', 'tree', 'car', 'background']
+        args.num_classes = len(CLASSES)
         ISPRS_train = ISPRS.ISPRSSegmentation(split='train', transform=composed_transforms_tr)
         ISPRS_val = ISPRS.ISPRSSegmentation(split='val', transform=composed_transforms_ts)
         db_train = ISPRS_train
@@ -130,8 +132,6 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
         pass
     else:
         raise NotImplementedError
-
-    net, starting_epoch = build_network(snapshot, backend)
     
     trainloader = DataLoader(db_train, batch_size=batch_size, shuffle=True, num_workers=0)
     # maybe need to adjust for the testloader batch_size
@@ -141,12 +141,16 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
     print('the length of trainloader is: ', num_img_tr)
     print('the length of testloader is: ', num_img_ts)
 
+    # build the model
+    net, starting_epoch = build_network(snapshot, backend)
+
     # train_loader, class_weights, n_images = None, None, None
 
     # set the class-weight in Loss function
     class_weights = None
+
     # set training optimizer
-    #optimizer = optim.Adam(net.parameters(), lr=lr)
+    # optimizer = optim.Adam(net.parameters(), lr=lr)
     optimizer = optim.SGD(net.parameters(), lr=lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
 
@@ -155,23 +159,27 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
     criterion = utils.cross_entropy2d
 
     running_loss_tr = 0.0
-    running_loss_ts = 0.0
     global_step = 0
     best_iou = -100
 
     print("start training...")
     for epoch in range(starting_epoch, starting_epoch + epochs):
         start_time = timeit.default_timer()
-        # update learning rate
-        if epoch % 50 == 49:
-            lr_ = utils.lr_poly(lr, epoch, args.epochs, 0.9)
-            print('(poly lr policy) learning rate: {}'.format(lr_))
-            optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=args.momentum, weight_decay=args.weight_decay)
+
 
         # train_iterator = tqdm(loader, total=max_steps // batch_size + 1)
         # set the model in training mode
         net.train()
         for ii, sample_batched in enumerate(trainloader):
+            # update learning rate
+            if epoch % 50 == 49:
+                lr = utils.adjust_learning_rate(args, optimizer, epoch, args.epochs, power=0.9, batch=ii,
+                                                nBatch=len(trainloader), method=args.lr_type)
+                # lr_ = utils.lr_poly(args.lr, epoch, args.epochs, 0.9)
+                print('method is: ', args.lr_type)
+                print('learning rate: {}'.format(lr))
+                # optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=args.momentum, weight_decay=args.weight_decay)
+
             inputs, labels = sample_batched['image'], sample_batched['label']
             # Forward-Backward of the mini-batch
             inputs, labels = Variable(inputs, requires_grad=True), Variable(labels)
@@ -191,13 +199,16 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
             # two-loss training strategy
             # seg_loss, cls_loss = seg_criterion(out, labels), cls_criterion(out_cls, labels)
             # loss = seg_loss + alpha * cls_loss
-            running_loss_tr += loss.data[0]
+            running_loss_tr += loss.item()
             # if (ii + 1) % 20 ==0:
             #     status = '{0} loss = {1:0.5f} avg = {2:0.5f}, lr = {5:0.7f}'.format(
             #         epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
             #     print(status)
             if ii % num_img_tr == (num_img_tr - 1):
-                print("Epoch [%d/%d] Loss: %.4f" % (epoch + 1, args.epochs, running_loss_tr))
+                stop_time = timeit.default_timer()
+                print("Epoch: [%d/%d] | Excution time: %s | Loss: %.4f" % (epoch + 1, args.epochs,
+                                                                           str(stop_time - start_time),
+                                                                           running_loss_tr))
                 running_loss_tr = 0.0
             # train_iterator.set_description(status)
             loss.backward()
@@ -218,6 +229,7 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
 
         score, class_iou, f1_scores = running_metrics.get_scores()
         print("Validation: \n m-IOU is: {} \n F1 score is： {}".format(class_iou, f1_scores))
+        print("=====================================================================================")
         running_metrics.reset()
 
         if score['Mean IoU : \t'] >= best_iou:
@@ -226,8 +238,9 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
                      'model_state': net.state_dict(),
                      'optimizer_state': optimizer.state_dict(),
                      }
-            torch.save(state, "{}_{}_best_model.pkl".format(args.backend, args.data))
-            torch.save(net.state_dict(), os.path.join(models_path, '_'.join(["PSPNet", str(epoch + 1)])))
+            # torch.save(state, "{}_{}_best_model.pth".format(args.backend, args.data))
+            filename = '{}_{}_{}_PSPNet_best_model.pth'.format(str(epoch + 1), args.data, args.backend)
+            torch.save(net.state_dict(), os.path.join(models_path, filename))
         scheduler.step()
 
         # train_loss = np.mean(epoch_losses)
@@ -235,10 +248,11 @@ def train(data, models_path, backend, snapshot, crop_x, crop_y, batch_size, alph
 
 if __name__ == '__main__':
     writer = SummaryWriter(log_dir=args.log_dir)
+
     train(data=args.data,
           models_path=args.models_path,
-          backend=args.backend,
           snapshot=args.snapshot,
+          backend=args.backend,
           crop_x=args.crop_x,
           crop_y=args.crop_y,
           batch_size=args.batch_size,
