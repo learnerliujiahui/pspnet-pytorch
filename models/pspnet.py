@@ -38,27 +38,8 @@ class PSPUpsample(nn.Module):
         h, w = 2 * x.size(2), 2 * x.size(3)
         p = F.upsample(input=x, size=(h, w), mode='bilinear')
         return self.conv(p)
-'''
-class DSMModule(nn.Module):
-    def __init__(self, n_classes, in_channels, out_channels):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(1, 64, 3, padding=1),
-            nn.BatchNorm2d(64)
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.BatchNorm2d(out_channels)
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.BatchNorm2d(out_channels)
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.BatchNorm2d(64)
-            nn.ReLU(),
-        )
-    def forward(self, x)
-        return conv(x)
-'''
+
+
 class PSPNet(nn.Module):
     def __init__(self, n_classes=18, sizes=(1, 2, 3, 6), psp_size=2048, deep_features_size=1024, 
                  backend='resnet34', pretrained=True):
