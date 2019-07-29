@@ -15,7 +15,8 @@ from dataloaders import ISPRS
 from dataloaders import custom_transforms as tr
 from tensorboardX import SummaryWriter
 
-from pspnet import PSPNet
+from models.pspnet import PSPNet
+import models.modules
 import utils
 import metrics
 
@@ -24,10 +25,10 @@ parser.add_argument('--data', type=str, default="ISPRS", help='Path to dataset f
 parser.add_argument('--snapshot', type=str, default=None, help='Path to pretrained weights')
 parser.add_argument('--save_path', type=str, default="/home/f517/PycharmProjects/ISPRS-pspnet-pytorch/model",
                     help='Path for storing model snapshots')
-parser.add_argument('--log_dir', default='/home/f517/PycharmProjects/ISPRS-pspnet-pytorch/log')
+parser.add_argument('--log_dir', default='/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/log')
 parser.add_argument('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
 
-parser.add_argument('--epochs', type=int, default=10000, help='Number of training epochs to run')
+parser.add_argument('--epochs', type=int, default=5000, help='Number of training epochs to run')
 parser.add_argument('--backend', type=str, default='resnet101', help='Feature extractor')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate')
 parser.add_argument('--lr_type', type=str, default='poly', choices=['cosine', 'multistage', 'poly'])
@@ -74,7 +75,6 @@ def build_network(snapshot, backend):
 
 def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha, epochs, lr, milestones):
 
-    #data_path = os.path.abspath(os.path.expanduser(data_path))
     save_path = os.path.abspath(os.path.expanduser(save_path))
     os.makedirs(save_path, exist_ok=True)
     
@@ -144,15 +144,11 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
     # build the model
     net, starting_epoch = build_network(snapshot, backend)
 
-    # train_loader, class_weights, n_images = None, None, None
-
     # set the class-weight in Loss function
     class_weights = None
 
     # set training optimizer
-    # optimizer = optim.Adam(net.parameters(), lr=lr)
     optimizer = optim.SGD(net.parameters(), lr=lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
 
     # seg_criterion = nn.NLLLoss2d(weight=class_weights)
     # cls_criterion = nn.BCEWithLogitsLoss(weight=class_weights)
@@ -168,18 +164,13 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
 
         lr_ = utils.lr_poly(args.lr, epoch, args.epochs, 0.9)
         writer.add_scalar("learning_rate", scalar_value=lr_, global_step=epoch)
-        print("learning rate is: ", lr_)
         optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=args.momentum, weight_decay=args.weight_decay)
 
         net.train()
         for ii, sample_batched in enumerate(trainloader):
-
-
             inputs, labels = sample_batched['image'], sample_batched['label']
             # Forward-Backward of the mini-batch
             inputs, labels = Variable(inputs, requires_grad=True), Variable(labels)
-            # print('the input image shape is: ', inputs.shape)
-            # print('the input label shape is: ', labels.shape)
 
             inputs, labels = inputs.cuda(), labels.cuda()
 
@@ -191,23 +182,18 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
             running_metrics_tr.update(gt_tr, pred_tr)
 
             loss = criterion(outputs, labels.type(torch.cuda.LongTensor))
-
-            # two-loss training strategy
-            # seg_loss, cls_loss = seg_criterion(out, labels), cls_criterion(out_cls, labels)
-            # loss = seg_loss + alpha * cls_loss
             running_loss_tr += loss.item()
-            # if (ii + 1) % 20 ==0:
-            #     status = '{0} loss = {1:0.5f} avg = {2:0.5f}, lr = {5:0.7f}'.format(
-            #         epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
-            #     print(status)
+
             if ii % num_img_tr == (num_img_tr - 1):
                 stop_time = timeit.default_timer()
-                print("Epoch: [%d/%d] | Excution time: %s | Loss: %.4f" % (epoch + 1, args.epochs,
-                                                                           str(stop_time - start_time),
-                                                                           running_loss_tr))
+                print("Epoch: [%d/%d] | Learning rate: %.6f | Excution time: %s | Loss: %.4f" %
+                      (epoch + 1, args.epochs,
+                       lr_,
+                       str(stop_time - start_time),
+                       running_loss_tr))
                 writer.add_scalar("training loss", scalar_value=running_loss_tr, global_step=epoch)
                 running_loss_tr = 0.0
-            # train_iterator.set_description(status)
+
             loss.backward()
             optimizer.step()
         score_tr, class_iou_tr, f1_scores_tr = running_metrics_tr.get_scores()
@@ -246,16 +232,13 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
                      'optimizer_state': optimizer.state_dict(),
                      }
             # torch.save(state, "{}_{}_best_model.pth".format(args.backend, args.data))
-            filename = '{}_{}_{}_PSPNet_best_model.pth'.format(str(epoch + 1), args.data, args.backend)
+            filename = '{}_{}_PSPNet_best_model.pth'.format(args.data, args.backend)
             torch.save(net.state_dict(), os.path.join(save_path, filename))
-        scheduler.step()
-
-        # train_loss = np.mean(epoch_losses)
 
 
 if __name__ == '__main__':
     writer = SummaryWriter(log_dir=args.log_dir)
-
+    # net, starting_epoch = build_network(args.snapshot, args.backend)
     train(data=args.data,
           save_path=args.save_path,
           snapshot=args.snapshot,
