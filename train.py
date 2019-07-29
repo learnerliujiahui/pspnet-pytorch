@@ -23,16 +23,16 @@ import metrics
 parser = argparse.ArgumentParser(description="Pytorch PSPNet parameters")
 parser.add_argument('--data', type=str, default="ISPRS", help='Path to dataset folder')
 parser.add_argument('--snapshot', type=str, default=None, help='Path to pretrained weights')
-parser.add_argument('--save_path', type=str, default="/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/model",
+parser.add_argument('--save_path', type=str, default="/home/f517/PycharmProjects/ISPRS-pspnet-pytorch/model",
                     help='Path for storing model snapshots')
 parser.add_argument('--log_dir', default='/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/log')
 parser.add_argument('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
 
-parser.add_argument('--epochs', type=int, default=1000, help='Number of training epochs to run')
+parser.add_argument('--epochs', type=int, default=5000, help='Number of training epochs to run')
 parser.add_argument('--backend', type=str, default='resnet101', help='Feature extractor')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate')
 parser.add_argument('--lr_type', type=str, default='poly', choices=['cosine', 'multistage', 'poly'])
-parser.add_argument('--batch-size', type=int, default=1)
+parser.add_argument('--batch-size', type=int, default=12)
 parser.add_argument('--momentum', default=0.9)
 parser.add_argument('--weight_decay', default=1e-4)
 parser.add_argument('--num_classes', type=int, help='Class number')
@@ -74,8 +74,8 @@ def build_network(snapshot, backend):
 
 
 def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha, epochs, lr, milestones):
-    #data_path = os.path.abspath(os.path.expanduser(data_path))
-    models_path = os.path.abspath(os.path.expanduser(save_path))
+
+    save_path = os.path.abspath(os.path.expanduser(save_path))
     os.makedirs(save_path, exist_ok=True)
     
     '''
@@ -144,13 +144,10 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
     # build the model
     net, starting_epoch = build_network(snapshot, backend)
 
-    # train_loader, class_weights, n_images = None, None, None
-
     # set the class-weight in Loss function
     class_weights = None
 
     # set training optimizer
-    # optimizer = optim.Adam(net.parameters(), lr=lr)
     optimizer = optim.SGD(net.parameters(), lr=lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
     # seg_criterion = nn.NLLLoss2d(weight=class_weights)
@@ -165,25 +162,15 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
     for epoch in range(starting_epoch, starting_epoch + epochs):
         start_time = timeit.default_timer()
 
+        lr_ = utils.lr_poly(args.lr, epoch, args.epochs, 0.9)
+        writer.add_scalar("learning_rate", scalar_value=lr_, global_step=epoch)
+        optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=args.momentum, weight_decay=args.weight_decay)
 
-        # train_iterator = tqdm(loader, total=max_steps // batch_size + 1)
-        # set the model in training mode
         net.train()
         for ii, sample_batched in enumerate(trainloader):
-            # update learning rate
-            if epoch % 50 == 49:
-                lr = utils.adjust_learning_rate(args, optimizer, epoch, args.epochs, power=0.9, batch=ii,
-                                                nBatch=len(trainloader), method=args.lr_type)
-                # lr_ = utils.lr_poly(args.lr, epoch, args.epochs, 0.9)
-                print('method is: ', args.lr_type)
-                print('learning rate: {}'.format(lr))
-                # optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=args.momentum, weight_decay=args.weight_decay)
-
             inputs, labels = sample_batched['image'], sample_batched['label']
             # Forward-Backward of the mini-batch
             inputs, labels = Variable(inputs, requires_grad=True), Variable(labels)
-            # print('the input image shape is: ', inputs.shape)
-            # print('the input label shape is: ', labels.shape)
 
             inputs, labels = inputs.cuda(), labels.cuda()
 
@@ -195,21 +182,18 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
             running_metrics_tr.update(gt_tr, pred_tr)
 
             loss = criterion(outputs, labels.type(torch.cuda.LongTensor))
-            # two-loss training strategy
-            # seg_loss, cls_loss = seg_criterion(out, labels), cls_criterion(out_cls, labels)
-            # loss = seg_loss + alpha * cls_loss
             running_loss_tr += loss.item()
-            # if (ii + 1) % 20 ==0:
-            #     status = '{0} loss = {1:0.5f} avg = {2:0.5f}, lr = {5:0.7f}'.format(
-            #         epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
-            #     print(status)
+
             if ii % num_img_tr == (num_img_tr - 1):
                 stop_time = timeit.default_timer()
-                print("Epoch: [%d/%d] | Excution time: %s | Loss: %.4f" % (epoch + 1, args.epochs,
-                                                                           str(stop_time - start_time),
-                                                                           running_loss_tr))
+                print("Epoch: [%d/%d] | Learning rate: %.6f | Excution time: %s | Loss: %.4f" %
+                      (epoch + 1, args.epochs,
+                       lr_,
+                       str(stop_time - start_time),
+                       running_loss_tr))
+                writer.add_scalar("training loss", scalar_value=running_loss_tr, global_step=epoch)
                 running_loss_tr = 0.0
-            # train_iterator.set_description(status)
+
             loss.backward()
             optimizer.step()
         score_tr, class_iou_tr, f1_scores_tr = running_metrics_tr.get_scores()
@@ -217,17 +201,27 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
 
         net.eval()
         for i_val, val_batched in enumerate(testloader):
-            inputs_val = Variable(val_batched['image'].cuda(), volatile=True)
-            labels_val = Variable(val_batched['label'].cuda(), volatile=True)
+            with torch.no_grad():
+                inputs_val = Variable(val_batched['image'].cuda())
+                labels_val = Variable(val_batched['label'].cuda())
 
-            outputs = net(inputs_val)
+                outputs = net(inputs_val)
             pred = outputs.data.max(1)[1].cpu().numpy()
             gt = labels_val.data.cpu().numpy()
 
             running_metrics.update(gt, pred)
 
         score, class_iou, f1_scores = running_metrics.get_scores()
+        writer.add_scalar("Mean IoU", scalar_value=score['Mean IoU : \t'], global_step=epoch)
+        writer.add_scalar("impervious_surfaces F1 score", scalar_value=f1_scores[0], global_step=epoch)
+        writer.add_scalar("building F1 score", scalar_value=f1_scores[1], global_step=epoch)
+        writer.add_scalar("low_vegetation F1 score", scalar_value=f1_scores[2], global_step=epoch)
+        writer.add_scalar("tree F1 score", scalar_value=f1_scores[3], global_step=epoch)
+        writer.add_scalar("car F1 score", scalar_value=f1_scores[4], global_step=epoch)
+        writer.add_scalar("background F1 score", scalar_value=f1_scores[5], global_step=epoch)
+
         print("Validation: \n m-IOU is: {} \n F1 score is： {}".format(class_iou, f1_scores))
+        print("Mean IoU is: {:.4f}".format(score['Mean IoU : \t']))
         print("=====================================================================================")
         running_metrics.reset()
 
@@ -240,8 +234,6 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
             # torch.save(state, "{}_{}_best_model.pth".format(args.backend, args.data))
             filename = '{}_{}_PSPNet_best_model.pth'.format(args.data, args.backend)
             torch.save(net.state_dict(), os.path.join(save_path, filename))
-
-        # train_loss = np.mean(epoch_losses)
 
 
 if __name__ == '__main__':
@@ -259,3 +251,4 @@ if __name__ == '__main__':
           lr=args.lr,
           milestones=args.milestones,
           )
+    writer.close()
