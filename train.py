@@ -15,14 +15,15 @@ from dataloaders import ISPRS
 from dataloaders import custom_transforms as tr
 from tensorboardX import SummaryWriter
 
-from pspnet import PSPNet
+from models.pspnet import PSPNet
+import models.modules
 import utils
 import metrics
 
 parser = argparse.ArgumentParser(description="Pytorch PSPNet parameters")
 parser.add_argument('--data', type=str, default="ISPRS", help='Path to dataset folder')
 parser.add_argument('--snapshot', type=str, default=None, help='Path to pretrained weights')
-parser.add_argument('--models_path', type=str, default="/home/liujiahui/PycharmProjects/pspnet-pytorch/model",
+parser.add_argument('--save_path', type=str, default="/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/model",
                     help='Path for storing model snapshots')
 parser.add_argument('--log_dir', default='/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/log')
 parser.add_argument('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
@@ -72,11 +73,10 @@ def build_network(snapshot, backend):
     return net, epoch
 
 
-def train(data, models_path, snapshot, backend, crop_x, crop_y, batch_size, alpha, epochs, lr, milestones):
-
+def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha, epochs, lr, milestones):
     #data_path = os.path.abspath(os.path.expanduser(data_path))
-    models_path = os.path.abspath(os.path.expanduser(models_path))
-    os.makedirs(models_path, exist_ok=True)
+    models_path = os.path.abspath(os.path.expanduser(save_path))
+    os.makedirs(save_path, exist_ok=True)
     
     '''
         To follow this training routine you need a DataLoader that yields the tuples of the following format:
@@ -152,7 +152,6 @@ def train(data, models_path, snapshot, backend, crop_x, crop_y, batch_size, alph
     # set training optimizer
     # optimizer = optim.Adam(net.parameters(), lr=lr)
     optimizer = optim.SGD(net.parameters(), lr=lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
 
     # seg_criterion = nn.NLLLoss2d(weight=class_weights)
     # cls_criterion = nn.BCEWithLogitsLoss(weight=class_weights)
@@ -239,18 +238,17 @@ def train(data, models_path, snapshot, backend, crop_x, crop_y, batch_size, alph
                      'optimizer_state': optimizer.state_dict(),
                      }
             # torch.save(state, "{}_{}_best_model.pth".format(args.backend, args.data))
-            filename = '{}_{}_{}_PSPNet_best_model.pth'.format(str(epoch + 1), args.data, args.backend)
-            torch.save(net.state_dict(), os.path.join(models_path, filename))
-        scheduler.step()
+            filename = '{}_{}_PSPNet_best_model.pth'.format(args.data, args.backend)
+            torch.save(net.state_dict(), os.path.join(save_path, filename))
 
         # train_loss = np.mean(epoch_losses)
 
 
 if __name__ == '__main__':
     writer = SummaryWriter(log_dir=args.log_dir)
-
+    # net, starting_epoch = build_network(args.snapshot, args.backend)
     train(data=args.data,
-          models_path=args.models_path,
+          save_path=args.save_path,
           snapshot=args.snapshot,
           backend=args.backend,
           crop_x=args.crop_x,
