@@ -22,17 +22,18 @@ import metrics
 
 parser = argparse.ArgumentParser(description="Pytorch PSPNet parameters")
 parser.add_argument('--data', type=str, default="ISPRS", help='Path to dataset folder')
-parser.add_argument('--snapshot', type=str, default=None, help='Path to pretrained weights')
+parser.add_argument('--snapshot', type=str,
+                    help='Path to pretrained weights')
 parser.add_argument('--save_path', type=str, default="/home/f517/PycharmProjects/ISPRS-pspnet-pytorch/model",
                     help='Path for storing model snapshots')
-parser.add_argument('--log_dir', default='/home/liujiahui/PycharmProjects/ISPRS-pspnet-pytorch/log')
+parser.add_argument('--log_dir', default='/home/f517/PycharmProjects/ISPRS-pspnet-pytorch/log')
 parser.add_argument('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
 
 parser.add_argument('--epochs', type=int, default=5000, help='Number of training epochs to run')
 parser.add_argument('--backend', type=str, default='resnet101', help='Feature extractor')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate')
 parser.add_argument('--lr_type', type=str, default='poly', choices=['cosine', 'multistage', 'poly'])
-parser.add_argument('--batch-size', type=int, default=12)
+parser.add_argument('--batch-size', type=int, default=4)
 parser.add_argument('--momentum', default=0.9)
 parser.add_argument('--weight_decay', default=1e-4)
 parser.add_argument('--num_classes', type=int, help='Class number')
@@ -60,13 +61,14 @@ def build_network(snapshot, backend):
     # load net into Multi-GPU
     net = nn.DataParallel(net, device_ids=range(torch.cuda.device_count()))
     net.cuda()
-    ''''{}_{}_{}_PSPNet_best_model.pth'.format(str(epoch + 1), args.data, args.backend'''
+
+    ''''{}_{}_PSPNet_best_model.pth'.format(args.data, args.backend'''
     if snapshot is not None:
         print("Initializing weights from: {}...".format(snapshot))
-        epoch, data, backend, _ = os.path.basename(snapshot).split('_')
-        epoch = int(epoch)
+        data, backend, _,_,_ = os.path.basename(snapshot).split('_')
+        # epoch = int(epoch)
         net.load_state_dict(torch.load(snapshot))
-        logging.info("Snapshot for epoch {} loaded from {}".format(epoch, snapshot))
+        # logging.info("Snapshot for epoch {} loaded from {}".format(epoch, snapshot))
     else:
         print("Training PSPNet from scratch...")
     net = net.cuda()
@@ -222,6 +224,7 @@ def train(data, save_path, snapshot, backend, crop_x, crop_y, batch_size, alpha,
 
         print("Validation: \n m-IOU is: {} \n F1 score is： {}".format(class_iou, f1_scores))
         print("Mean IoU is: {:.4f}".format(score['Mean IoU : \t']))
+        print("overall acc is: {:.4f}".format(score['Overall Acc: \t']))
         print("=====================================================================================")
         running_metrics.reset()
 
