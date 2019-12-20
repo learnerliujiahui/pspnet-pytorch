@@ -1,2 +1,2 @@
-# ISPRS-pspnet-pytorch
-Improved pspnet model structure for ISPRS image segmentation
+# pspnet-pytorch
+Improved pspnet model structure for image segmentation
